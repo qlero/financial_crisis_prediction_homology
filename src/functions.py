@@ -1,3 +1,21 @@
+import gudhi as gd
+import gudhi.representations
+import matplotlib.dates as mdates
+import matplotlib.pyplot as plt
+import numpy as np
+import pandas as pd
+import pickle
+import pymannkendall as mk
+import scipy.signal as signal
+import statsmodels
+
+from IPython import display
+from IPython.display import Video
+from matplotlib.animation import FuncAnimation
+from mpl_toolkits.mplot3d import Axes3D
+from pylab import *
+from statsmodels.tsa.stattools import acf
+
 def compute_log_returns(
     df: pd.DataFrame
 ) -> pd.DataFrame:
@@ -502,6 +520,118 @@ def save_data(
     with open(f"{path}/logretStocksUS_L1L2norms_{p}", "wb") as f:
         pickle.dump(norms, f)
 
+def statistical_test_suite_for_l1l2norms(data, norms, w):
+    """
+    Computes statistics of the l1 and l2 norms:
+        - variance of the time series based on a
+          window size of z=500
+        - spectral density at low frequencies, with 𝑧=500
+        - first lag of the autocorrelation function (ACF), with 𝑧=250
+        - The Mann-Kendall test
+    """
+    # Declares variables
+    variance_l1 = []
+    variance_l2 = []
+    acf_l1  = []
+    acf_l2  = []
+    mk_l1 = []
+    mk_l2 = []
+    index_z500  = data.index[500+w:]
+    index_z250  = data.index[250+w:]
+    index_zw    = data.index[w:]
+    # Declares a low pass filter using Butterworth filter
+    b, a = signal.butter(5, 0.025, btype='lowpass')
+    # Computes the statistics
+    discretize = lambda x: 1 if x=="increasing" else (-1 if x=="decreasing" else 0)
+    for z in range(len(norms)-500):
+        variance_l1.append(np.var(norms[z:z+500, 0]))
+        variance_l2.append(np.var(norms[z:z+500, 1]))
+        mk_l1.append(discretize(mk.original_test(norms[z:z+500, 0], alpha=0.05)[0]))
+        mk_l2.append(discretize(mk.original_test(norms[z:z+500, 1], alpha=0.05)[0]))
+    for z in range(len(norms)-250):
+        acf_l1.append(acf(norms[z:z+250, 0], nlags=1)[1])
+        acf_l2.append(acf(norms[z:z+250, 1], nlags=1)[1])
+    # Forward backward filter
+    spd_lpf_l1   = signal.filtfilt(b, a, norms[:,0])
+    spd_lpf_l2   = signal.filtfilt(b, a, norms[:,1])
+    # Computes the dataframes
+    df_variances = pd.DataFrame(
+        np.array([variance_l1, variance_l2]).T, 
+        index   = index_z500, 
+        columns = ["variance_L1","variance_L2"]
+    )
+    df_low_pass_filter = pd.DataFrame(
+        np.array([spd_lpf_l1, spd_lpf_l2]).T, 
+        index   = index_zw, 
+        columns = ["Low-pass-filtered L1","Low-pass-filtered L2"]
+    )
+    df_acf = pd.DataFrame(
+        np.array([acf_l1, acf_l2]).T, 
+        index   = index_z250, 
+        columns = ["ACF_L1","ACF_L2"]
+    )
+    df_mk = pd.DataFrame(
+        np.array([mk_l1,mk_l2]).T, 
+        index   = index_z500, 
+        columns = ["MK_L1","MK_L2"]
+    )
+    # Plots the different statistics
+    # Variances
+    ax = df_variances.plot(figsize = (18, 7), 
+                 lw      = 0.8, 
+                 ylabel  = "variances",
+                 title   = "500-day variance of L1 and L2 norms")
+    ax.axvline(x         = np.where([df_variances.index=="2000-01-10"])[1][0], 
+               color     = 'r', 
+               linestyle = (0, (3, 5, 1, 5, 1, 5)), 
+               label     = 'America Online/Time Warner merger')
+    ax.axvline(x         = np.where([df_variances.index=="2008-09-15"])[1][0], 
+               color     = 'r', 
+               linestyle = '--', 
+               label     = 'Lehman Brothers bankruptcy')
+    ax.legend()
+    # Low-Pass Filters
+    ax = df_low_pass_filter.plot(figsize = (18, 7), 
+                 lw      = 0.8, 
+                 ylabel  = "Value",
+                 title   = "Low-pass filtered L1 and L2 norms")
+    ax.axvline(x         = np.where([df_low_pass_filter.index=="2000-01-10"])[1][0], 
+               color     = 'r', 
+               linestyle = (0, (3, 5, 1, 5, 1, 5)), 
+               label     = 'America Online/Time Warner merger')
+    ax.axvline(x         = np.where([df_low_pass_filter.index=="2008-09-15"])[1][0], 
+               color     = 'r', 
+               linestyle = '--', 
+               label     = 'Lehman Brothers bankruptcy')
+    ax.legend()
+    # ACF
+    ax = df_acf.plot(figsize = (18, 7), 
+                 lw      = 0.8, 
+                 ylabel  = "Value",
+                 title   = "First ACF Lag of L1 and L2 norms")
+    ax.axvline(x         = np.where([df_acf.index=="2000-01-10"])[1][0], 
+               color     = 'r', 
+               linestyle = (0, (3, 5, 1, 5, 1, 5)), 
+               label     = 'America Online/Time Warner merger')
+    ax.axvline(x         = np.where([df_acf.index=="2008-09-15"])[1][0], 
+               color     = 'r', 
+               linestyle = '--', 
+               label     = 'Lehman Brothers bankruptcy')
+    ax.legend()
+    ax = df_mk.plot(figsize = (18, 7), 
+                 lw      = 0.8, 
+                 ylabel  = "Value",
+                 title   = "Mendall-Kendall test L1 and L2 norms\n(1: increasing, -1: decreasing)")
+    ax.axvline(x         = np.where([df_mk.index=="2000-01-10"])[1][0], 
+               color     = 'r', 
+               linestyle = (0, (3, 5, 1, 5, 1, 5)), 
+               label     = 'America Online/Time Warner merger')
+    ax.axvline(x         = np.where([df_mk.index=="2008-09-15"])[1][0], 
+               color     = 'r', 
+               linestyle = '--', 
+               label     = 'Lehman Brothers bankruptcy')
+    ax.legend()
+        
 def white_noise_with_gamma_inverse_var(
     n: int = 100
 ):
